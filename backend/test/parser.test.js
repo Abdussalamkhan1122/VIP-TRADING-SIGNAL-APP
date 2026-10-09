@@ -42,6 +42,17 @@ assert.equal(realTelegramSignal.stopLoss, '4111');
 assert.equal(realTelegramSignal.takeProfits.length, 5);
 assert.equal(realTelegramSignal.takeProfits[4].value, '250');
 
+const doubleDashSignal = parseSignal(`GOLD BUY NOW 4128——4124
+
+Tp
+50 pips
+100 pips
+
+Sl 4118`);
+
+assert.equal(doubleDashSignal.entry, '4128-4124');
+assert.equal(doubleDashSignal.stopLoss, '4118');
+
 assert.equal(parseSignal('hello world'), null);
 
 console.log('parser tests passed');
