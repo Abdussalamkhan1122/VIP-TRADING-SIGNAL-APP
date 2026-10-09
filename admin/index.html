@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hurrair Admin</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <aside>
+      <h1>Hurrair Admin</h1>
+      <button data-view="signals">Signals</button>
+      <button data-view="vip">VIP Requests</button>
+      <button data-view="settings">Settings</button>
+    </aside>
+    <main>
+      <section id="signals" class="view active">
+        <header>
+          <h2>Signals</h2>
+          <button id="refreshSignals">Refresh</button>
+        </header>
+        <div id="signalsList" class="grid"></div>
+      </section>
+      <section id="vip" class="view">
+        <header>
+          <h2>VIP Requests</h2>
+          <button id="refreshVip">Refresh</button>
+        </header>
+        <div id="vipList" class="grid"></div>
+      </section>
+      <section id="settings" class="view">
+        <header>
+          <h2>Settings</h2>
+        </header>
+        <form id="settingsForm">
+          <label>
+            Backend URL
+            <input id="backendUrl" value="http://localhost:10000" />
+          </label>
+          <label>
+            Admin API Key
+            <input id="adminKey" type="password" placeholder="ADMIN_API_KEY" />
+          </label>
+          <label>
+            Free Signal Limit
+            <input id="freeSignalLimit" type="number" min="0" value="2" />
+          </label>
+          <label>
+            Reset Period
+            <select id="resetPeriod">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="never">Never</option>
+            </select>
+          </label>
+          <button>Save Settings</button>
+        </form>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
+
