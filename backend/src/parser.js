@@ -1,7 +1,9 @@
 export function parseSignal(text) {
   if (!text || typeof text !== 'string') return null;
 
-  const normalized = text
+  const cleanText = text.replace(/[–—−]/g, '-');
+
+  const normalized = cleanText
     .replace(/\r/g, '')
     .split('\n')
     .map((line) => line.trim())
@@ -62,4 +64,3 @@ function normalizeSymbol(symbol) {
 function inferTpUnit(text) {
   return /\bpips?\b/i.test(text) ? 'pips' : 'price';
 }
-

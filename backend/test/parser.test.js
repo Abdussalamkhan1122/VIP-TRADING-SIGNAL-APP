@@ -24,7 +24,24 @@ assert.equal(signal.takeProfits[0].value, '50');
 assert.equal(signal.takeProfits[0].unit, 'pips');
 assert.equal(signal.confidence, 1);
 
+const realTelegramSignal = parseSignal(`GOLD BUY NOW 4121—4118
+
+Tp
+50 pips
+100 pips
+120 pips
+200 pips
+250pips
+
+Sl 4111`);
+
+assert.equal(realTelegramSignal.symbol, 'GOLD');
+assert.equal(realTelegramSignal.direction, 'BUY');
+assert.equal(realTelegramSignal.entry, '4121-4118');
+assert.equal(realTelegramSignal.stopLoss, '4111');
+assert.equal(realTelegramSignal.takeProfits.length, 5);
+assert.equal(realTelegramSignal.takeProfits[4].value, '250');
+
 assert.equal(parseSignal('hello world'), null);
 
 console.log('parser tests passed');
-
