@@ -7,8 +7,10 @@
     "start": "node src/server.js",
     "test": "node test/parser.test.js"
   },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
   "engines": {
     "node": ">=20"
   }
 }
-

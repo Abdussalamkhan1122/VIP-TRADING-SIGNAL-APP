@@ -2,11 +2,10 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseSignal } from './parser.js';
-import { JsonStore } from './store.js';
+import { createStore } from './store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const store = new JsonStore(join(__dirname, '..', 'data', 'store.json'));
-await store.load();
+const store = await createStore(join(__dirname, '..', 'data', 'store.json'));
 
 const PORT = Number(process.env.PORT || 10000);
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'change-me';
@@ -29,10 +28,10 @@ async function route(req, res) {
 
   if (req.method === 'OPTIONS') return sendCors(res);
   if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true });
-  if (req.method === 'GET' && url.pathname === '/api/settings') return sendJson(res, 200, store.data.settings);
+  if (req.method === 'GET' && url.pathname === '/api/settings') return sendJson(res, 200, await store.getSettings());
 
   if (req.method === 'GET' && url.pathname === '/api/signals') {
-    return sendJson(res, 200, { signals: store.getSignals(url.searchParams.get('audience') || 'all') });
+    return sendJson(res, 200, { signals: await store.getSignals(url.searchParams.get('audience') || 'all') });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/vip/request') {
@@ -66,7 +65,7 @@ async function route(req, res) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/admin/vip-requests') {
-      return sendJson(res, 200, { requests: store.data.vipRequests });
+      return sendJson(res, 200, { requests: await store.getVipRequests() });
     }
 
     const vipMatch = url.pathname.match(/^\/api\/admin\/vip-requests\/([^/]+)$/);
@@ -114,4 +113,3 @@ function sendCors(res) {
 function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
-

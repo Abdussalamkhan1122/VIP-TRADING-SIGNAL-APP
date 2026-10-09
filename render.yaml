@@ -10,6 +10,10 @@ services:
         value: 20
       - key: ADMIN_API_KEY
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hurrair-vip-trading-db
+          property: connectionString
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHANNEL
@@ -19,3 +23,7 @@ services:
       - key: EXNESS_PARTNER_LINK
         value: "https://one.exnessonelink.com/a/i2cmzyptz3"
 
+databases:
+  - name: hurrair-vip-trading-db
+    databaseName: hurrair_vip_trading
+    user: hurrair_vip_trading
