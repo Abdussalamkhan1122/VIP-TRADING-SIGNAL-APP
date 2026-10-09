@@ -41,6 +41,17 @@ async function route(req, res) {
     return sendJson(res, 201, { request });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/vip/status') {
+    const email = String(url.searchParams.get('email') || '').trim().toLowerCase();
+    if (!isEmail(email)) return sendJson(res, 400, { error: 'valid_email_required' });
+    const request = await store.findVipRequestByEmail(email);
+    return sendJson(res, 200, {
+      email,
+      status: request?.status || 'not_submitted',
+      request: request || null
+    });
+  }
+
   if (req.method === 'POST' && url.pathname === '/webhooks/telegram') {
     if (TELEGRAM_WEBHOOK_SECRET) {
       const received = req.headers['x-telegram-bot-api-secret-token'];

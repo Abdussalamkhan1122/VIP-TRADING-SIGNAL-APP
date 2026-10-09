@@ -14,6 +14,7 @@ document.querySelector('#refreshVip').addEventListener('click', loadVipRequests)
 document.querySelector('#settingsForm').addEventListener('submit', saveSettings);
 
 loadSignals();
+loadSettings();
 
 function showView(id) {
   document.querySelectorAll('.view').forEach((view) => view.classList.remove('active'));
@@ -65,9 +66,17 @@ async function saveSettings(event) {
   localStorage.setItem('adminKey', state.adminKey);
   await patch('/api/admin/settings', {
     freeSignalLimit: document.querySelector('#freeSignalLimit').value,
-    resetPeriod: document.querySelector('#resetPeriod').value
+    resetPeriod: document.querySelector('#resetPeriod').value,
+    exnessPartnerLink: document.querySelector('#exnessPartnerLink').value
   }, true);
   alert('Settings saved');
+}
+
+async function loadSettings() {
+  const data = await get('/api/settings');
+  document.querySelector('#freeSignalLimit').value = data.freeSignalLimit;
+  document.querySelector('#resetPeriod').value = data.resetPeriod;
+  document.querySelector('#exnessPartnerLink').value = data.exnessPartnerLink;
 }
 
 async function get(path, admin = false) {
@@ -89,4 +98,3 @@ function headers(admin) {
 }
 
 window.updateVip = updateVip;
-

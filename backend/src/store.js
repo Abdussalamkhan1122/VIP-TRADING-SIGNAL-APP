@@ -82,6 +82,11 @@ export class JsonStore {
     return this.data.vipRequests;
   }
 
+  findVipRequestByEmail(email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    return this.data.vipRequests.find((request) => request.email === normalizedEmail) || null;
+  }
+
   async updateSettings(patch) {
     const next = { ...this.data.settings };
     if (patch.freeSignalLimit !== undefined) next.freeSignalLimit = clampNumber(patch.freeSignalLimit, 0, 100);
@@ -93,6 +98,9 @@ export class JsonStore {
   }
 
   async createVipRequest(input) {
+    const existing = this.findVipRequestByEmail(input.email);
+    if (existing && ['approved', 'pending'].includes(existing.status)) return existing;
+
     const request = {
       id: randomUUID(),
       email: String(input.email || '').trim().toLowerCase(),
@@ -239,6 +247,9 @@ export class PgStore {
   }
 
   async createVipRequest(input) {
+    const existing = await this.findVipRequestByEmail(input.email);
+    if (existing && ['approved', 'pending'].includes(existing.status)) return existing;
+
     const result = await this.pool.query(
       `insert into vip_requests (id, email, display_name, status)
        values ($1, $2, $3, 'pending')
@@ -251,6 +262,14 @@ export class PgStore {
   async getVipRequests() {
     const result = await this.pool.query('select * from vip_requests order by created_at desc');
     return result.rows.map(mapVipRequestRow);
+  }
+
+  async findVipRequestByEmail(email) {
+    const result = await this.pool.query(
+      'select * from vip_requests where email = $1 order by created_at desc limit 1',
+      [String(email || '').trim().toLowerCase()]
+    );
+    return result.rows[0] ? mapVipRequestRow(result.rows[0]) : null;
   }
 
   async updateVipRequest(id, status) {

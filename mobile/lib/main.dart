@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const backendBaseUrl = String.fromEnvironment(
   'BACKEND_URL',
@@ -90,6 +92,16 @@ enum SignalAudience {
 class ApiClient {
   const ApiClient();
 
+  Future<AppSettings> getSettings() async {
+    final uri = Uri.parse('$backendBaseUrl/api/settings');
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Settings request failed: ${response.statusCode}');
+    }
+
+    return AppSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Future<List<TradingSignal>> getSignals(SignalAudience audience) async {
     final uri = Uri.parse('$backendBaseUrl/api/signals?audience=${audience.apiValue}');
     final response = await http.get(uri);
@@ -116,6 +128,29 @@ class ApiClient {
       throw Exception('VIP request failed: ${response.statusCode}');
     }
   }
+
+  Future<String> getVipStatus(String email) async {
+    final uri = Uri.parse('$backendBaseUrl/api/vip/status?email=${Uri.encodeQueryComponent(email)}');
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('VIP status request failed: ${response.statusCode}');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['status']?.toString() ?? 'not_submitted';
+  }
+}
+
+class AppSettings {
+  const AppSettings({required this.exnessPartnerLink});
+
+  final String exnessPartnerLink;
+
+  factory AppSettings.fromJson(Map<String, dynamic> json) {
+    return AppSettings(
+      exnessPartnerLink: json['exnessPartnerLink']?.toString() ?? 'https://one.exnessonelink.com/a/i2cmzyptz3',
+    );
+  }
 }
 
 class TradingSignal {
@@ -128,6 +163,7 @@ class TradingSignal {
     required this.stopLoss,
     required this.takeProfits,
     required this.status,
+    required this.createdAt,
   });
 
   final String id;
@@ -138,6 +174,7 @@ class TradingSignal {
   final String? stopLoss;
   final List<String> takeProfits;
   final String status;
+  final DateTime? createdAt;
 
   factory TradingSignal.fromJson(Map<String, dynamic> json) {
     final tps = (json['takeProfits'] as List<dynamic>? ?? [])
@@ -159,7 +196,14 @@ class TradingSignal {
       stopLoss: json['stopLoss']?.toString(),
       takeProfits: tps,
       status: json['status']?.toString() ?? 'active',
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '')?.toLocal(),
     );
+  }
+
+  bool get isNew {
+    final timestamp = createdAt;
+    if (timestamp == null) return false;
+    return DateTime.now().difference(timestamp).inMinutes < 60;
   }
 }
 
@@ -191,8 +235,40 @@ class _SignalsPageState extends State<SignalsPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.audience == SignalAudience.vip) {
+      return VipGate(
+        child: SignalsList(
+          title: widget.title,
+          futureSignals: futureSignals,
+          onRefresh: refresh,
+        ),
+      );
+    }
+
+    return SignalsList(
+      title: widget.title,
+      futureSignals: futureSignals,
+      onRefresh: refresh,
+    );
+  }
+}
+
+class SignalsList extends StatelessWidget {
+  const SignalsList({
+    super.key,
+    required this.title,
+    required this.futureSignals,
+    required this.onRefresh,
+  });
+
+  final String title;
+  final Future<List<TradingSignal>> futureSignals;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: () async => refresh(),
+      onRefresh: () async => onRefresh(),
       child: FutureBuilder<List<TradingSignal>>(
         future: futureSignals,
         builder: (context, snapshot) {
@@ -201,18 +277,18 @@ class _SignalsPageState extends State<SignalsPage> {
           }
 
           if (snapshot.hasError) {
-            return ErrorState(message: snapshot.error.toString(), onRetry: refresh);
+            return ErrorState(message: snapshot.error.toString(), onRetry: onRefresh);
           }
 
           final signals = snapshot.data ?? [];
           if (signals.isEmpty) {
-            return EmptyState(title: widget.title, onRefresh: refresh);
+            return EmptyState(title: title, onRefresh: onRefresh);
           }
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              PageHeader(title: widget.title, onRefresh: refresh),
+              PageHeader(title: title, onRefresh: onRefresh),
               const SizedBox(height: 12),
               ...signals.map((signal) => SignalCard(signal: signal)),
             ],
@@ -278,7 +354,16 @@ class SignalCard extends StatelessWidget {
             InfoRow(icon: Icons.login, label: 'Entry', value: signal.entry ?? '-'),
             InfoRow(icon: Icons.shield, label: 'SL', value: signal.stopLoss ?? '-'),
             InfoRow(icon: Icons.schedule, label: 'Status', value: signal.status),
+            InfoRow(icon: Icons.access_time, label: 'Time', value: formatSignalTime(signal.createdAt)),
             const SizedBox(height: 12),
+            if (signal.isNew)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Chip(
+                  avatar: Icon(Icons.fiber_new, size: 16),
+                  label: Text('New signal'),
+                ),
+              ),
             if (signal.takeProfits.isNotEmpty)
               Wrap(
                 spacing: 8,
@@ -293,6 +378,123 @@ class SignalCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+String formatSignalTime(DateTime? timestamp) {
+  if (timestamp == null) return '-';
+  final now = DateTime.now();
+  final age = now.difference(timestamp);
+  if (age.inMinutes < 1) return 'Just now';
+  if (age.inMinutes < 60) return '${age.inMinutes} min ago';
+  if (age.inHours < 24) return '${age.inHours} hr ago';
+
+  final day = timestamp.day.toString().padLeft(2, '0');
+  final month = timestamp.month.toString().padLeft(2, '0');
+  final hour = timestamp.hour.toString().padLeft(2, '0');
+  final minute = timestamp.minute.toString().padLeft(2, '0');
+  return '$day/$month/${timestamp.year} $hour:$minute';
+}
+
+class VipGate extends StatefulWidget {
+  const VipGate({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<VipGate> createState() => _VipGateState();
+}
+
+class _VipGateState extends State<VipGate> {
+  final api = const ApiClient();
+  late Future<String> statusFuture;
+  String? email;
+
+  @override
+  void initState() {
+    super.initState();
+    statusFuture = loadStatus();
+  }
+
+  Future<String> loadStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedEmail = prefs.getString('vipEmail');
+    email = savedEmail;
+    if (savedEmail == null || savedEmail.isEmpty) return 'not_submitted';
+    return api.getVipStatus(savedEmail);
+  }
+
+  void refresh() {
+    setState(() {
+      statusFuture = loadStatus();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String>(
+      future: statusFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final status = snapshot.data ?? 'not_submitted';
+        if (status == 'approved') return widget.child;
+
+        return LockedVipView(email: email, status: status, onRefresh: refresh);
+      },
+    );
+  }
+}
+
+class LockedVipView extends StatelessWidget {
+  const LockedVipView({super.key, required this.email, required this.status, required this.onRefresh});
+
+  final String? email;
+  final String status;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        PageHeader(title: 'VIP Locked', onRefresh: onRefresh),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.lock, size: 36),
+                const SizedBox(height: 12),
+                Text('VIP access is not active', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(statusMessage(status, email)),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Open the Unlock tab below to request VIP access.')),
+                    );
+                  },
+                  icon: const Icon(Icons.lock_open),
+                  label: const Text('How to Unlock'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String statusMessage(String status, String? email) {
+    if (status == 'pending') return '$email is pending admin verification.';
+    if (status == 'rejected') return '$email was not approved. Please register through the official partner link and submit again.';
+    return 'Create an Exness account through the official partner link, submit your email, and wait for admin approval.';
   }
 }
 
@@ -329,13 +531,37 @@ class UnlockVipPage extends StatefulWidget {
 class _UnlockVipPageState extends State<UnlockVipPage> {
   final api = const ApiClient();
   final emailController = TextEditingController();
+  late Future<AppSettings> settingsFuture;
   bool loading = false;
   String? message;
+
+  @override
+  void initState() {
+    super.initState();
+    settingsFuture = api.getSettings();
+    loadSavedEmail();
+  }
 
   @override
   void dispose() {
     emailController.dispose();
     super.dispose();
+  }
+
+  Future<void> loadSavedEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedEmail = prefs.getString('vipEmail');
+    if (savedEmail != null && savedEmail.isNotEmpty) {
+      emailController.text = savedEmail;
+    }
+  }
+
+  Future<void> openPartnerLink(String link) async {
+    final uri = Uri.parse(link);
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      setState(() => message = 'Could not open partner link.');
+    }
   }
 
   Future<void> submit() async {
@@ -352,9 +578,10 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
 
     try {
       await api.requestVip(email: email);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('vipEmail', email);
       setState(() {
         message = 'Request submitted. Admin will verify your Exness affiliation.';
-        emailController.clear();
       });
     } catch (_) {
       setState(() => message = 'Could not submit request. Please try again.');
@@ -370,20 +597,32 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
       children: [
         Text('Unlock VIP', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 12),
-        const Card(
-          child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('1. Create your Exness account through the official partner link.'),
-                SizedBox(height: 8),
-                SelectableText('https://one.exnessonelink.com/a/i2cmzyptz3'),
-                SizedBox(height: 8),
-                Text('2. Submit the same email here for manual VIP verification.'),
-              ],
-            ),
-          ),
+        FutureBuilder<AppSettings>(
+          future: settingsFuture,
+          builder: (context, snapshot) {
+            final link = snapshot.data?.exnessPartnerLink ?? 'https://one.exnessonelink.com/a/i2cmzyptz3';
+            return Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('1. Create your Exness account through the official partner link.'),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () => openPartnerLink(link),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open Partner Link'),
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(link),
+                    const SizedBox(height: 12),
+                    const Text('2. Submit the same email here for manual VIP verification.'),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
         const SizedBox(height: 16),
         TextField(
