@@ -53,6 +53,17 @@ Sl 4118`);
 assert.equal(doubleDashSignal.entry, '4128-4124');
 assert.equal(doubleDashSignal.stopLoss, '4118');
 
+const spacedDashSignal = parseSignal(`GOLD SELL NOW 4157- -4160
+
+TP
+50 pips
+100 pips
+
+SL 4170`);
+
+assert.equal(spacedDashSignal.entry, '4157-4160');
+assert.equal(spacedDashSignal.stopLoss, '4170');
+
 assert.equal(parseSignal('hello world'), null);
 
 console.log('parser tests passed');

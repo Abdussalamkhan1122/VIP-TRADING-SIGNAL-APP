@@ -1,7 +1,9 @@
 export function parseSignal(text) {
   if (!text || typeof text !== 'string') return null;
 
-  const cleanText = text.replace(/[-–—−]+/g, '-');
+  const cleanText = text
+    .replace(/[–—−]/g, '-')
+    .replace(/(\d)\s*(?:-\s*)+(\d)/g, '$1-$2');
 
   const normalized = cleanText
     .replace(/\r/g, '')
