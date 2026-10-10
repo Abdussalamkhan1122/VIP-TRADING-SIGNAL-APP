@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -491,14 +490,14 @@ class NotificationService {
       await const ApiClient().registerDeviceToken(
         authToken: authToken,
         deviceToken: token,
-        platform: Platform.isIOS ? 'ios' : 'android',
+        platform: currentMobilePlatform,
       );
 
       FirebaseMessaging.instance.onTokenRefresh.listen((nextToken) async {
         await const ApiClient().registerDeviceToken(
           authToken: authToken,
           deviceToken: nextToken,
-          platform: Platform.isIOS ? 'ios' : 'android',
+          platform: currentMobilePlatform,
         );
       });
 
@@ -508,6 +507,10 @@ class NotificationService {
       await prefs.setString('notificationStatus', 'error');
       return 'error';
     }
+  }
+
+  static String get currentMobilePlatform {
+    return defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
   }
 }
 
