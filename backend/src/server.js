@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseSignal } from './parser.js';
 import { createStore } from './store.js';
+import { sendSignalPush } from './push.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const store = await createStore(join(__dirname, '..', 'data', 'store.json'));
@@ -57,6 +58,19 @@ async function route(req, res) {
     });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/devices/register') {
+    const user = await getAuthUser(req);
+    if (!user) return sendJson(res, 401, { error: 'auth_required' });
+    const body = await readJson(req);
+    if (!body.token) return sendJson(res, 400, { error: 'device_token_required' });
+    const device = await store.registerDeviceToken({
+      userEmail: user.email,
+      token: body.token,
+      platform: body.platform || 'unknown'
+    });
+    return sendJson(res, 201, { device });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/signals') {
     const audience = url.searchParams.get('audience') || 'free';
     if (audience === 'vip') {
@@ -103,6 +117,9 @@ async function route(req, res) {
     const parsed = parseSignal(text);
     if (!parsed || parsed.confidence < 0.6) return sendJson(res, 202, { accepted: false, reason: 'not_a_signal' });
     const signal = await store.addSignal(parsed, 'telegram');
+    notifySignal(signal).catch((error) => {
+      console.warn(`Signal push failed: ${error.message}`);
+    });
     return sendJson(res, 201, { accepted: true, signal });
   }
 
@@ -152,6 +169,11 @@ function publicUser(user) {
     email: user.email,
     displayName: user.displayName || ''
   };
+}
+
+async function notifySignal(signal) {
+  const tokens = await store.getDeviceTokensForAudience(signal.audience);
+  return sendSignalPush(signal, tokens);
 }
 
 async function readJson(req) {

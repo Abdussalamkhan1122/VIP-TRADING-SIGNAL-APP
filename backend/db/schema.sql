@@ -42,6 +42,16 @@ create table if not exists users (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists device_tokens (
+  id uuid primary key,
+  user_email text not null,
+  token text not null unique,
+  platform text not null default 'unknown',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists signals_audience_created_at_idx on signals (audience, created_at desc);
 create index if not exists vip_requests_status_created_at_idx on vip_requests (status, created_at desc);
 create index if not exists users_auth_token_idx on users (auth_token);
+create index if not exists device_tokens_user_email_idx on device_tokens (user_email);

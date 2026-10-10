@@ -34,7 +34,8 @@ export class JsonStore {
       settings: DEFAULT_SETTINGS,
       signals: [],
       vipRequests: [],
-      users: []
+      users: [],
+      deviceTokens: []
     };
   }
 
@@ -104,6 +105,47 @@ export class JsonStore {
     if (!cleanToken) return null;
     const user = this.data.users.find((item) => item.authToken === cleanToken);
     return user ? mapUser(user) : null;
+  }
+
+  async registerDeviceToken(input) {
+    const token = String(input.token || '').trim();
+    const userEmail = normalizeEmail(input.userEmail);
+    const now = new Date().toISOString();
+    let device = this.data.deviceTokens.find((item) => item.token === token);
+
+    if (device) {
+      device.userEmail = userEmail;
+      device.platform = String(input.platform || device.platform || 'unknown');
+      device.updatedAt = now;
+    } else {
+      device = {
+        id: randomUUID(),
+        userEmail,
+        token,
+        platform: String(input.platform || 'unknown'),
+        createdAt: now,
+        updatedAt: now
+      };
+      this.data.deviceTokens.unshift(device);
+    }
+
+    await this.save();
+    return device;
+  }
+
+  getDeviceTokensForAudience(audience) {
+    if (audience === 'free') {
+      return this.data.deviceTokens.map((device) => device.token);
+    }
+
+    const approvedEmails = new Set(
+      this.data.vipRequests
+        .filter((request) => request.status === 'approved')
+        .map((request) => request.email)
+    );
+    return this.data.deviceTokens
+      .filter((device) => approvedEmails.has(device.userEmail))
+      .map((device) => device.token);
   }
 
   getSignals(audience = 'all') {
@@ -217,9 +259,19 @@ export class PgStore {
         updated_at timestamptz not null default now()
       );
 
+      create table if not exists device_tokens (
+        id uuid primary key,
+        user_email text not null,
+        token text not null unique,
+        platform text not null default 'unknown',
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      );
+
       create index if not exists signals_audience_created_at_idx on signals (audience, created_at desc);
       create index if not exists vip_requests_status_created_at_idx on vip_requests (status, created_at desc);
       create index if not exists users_auth_token_idx on users (auth_token);
+      create index if not exists device_tokens_user_email_idx on device_tokens (user_email);
     `);
 
     await this.pool.query(
@@ -297,6 +349,40 @@ export class PgStore {
     if (!cleanToken) return null;
     const result = await this.pool.query('select * from users where auth_token = $1 limit 1', [cleanToken]);
     return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
+  async registerDeviceToken(input) {
+    const result = await this.pool.query(
+      `insert into device_tokens (id, user_email, token, platform)
+       values ($1, $2, $3, $4)
+       on conflict (token) do update
+       set user_email = excluded.user_email,
+           platform = excluded.platform,
+           updated_at = now()
+       returning *`,
+      [
+        randomUUID(),
+        normalizeEmail(input.userEmail),
+        String(input.token || '').trim(),
+        String(input.platform || 'unknown')
+      ]
+    );
+    return mapDeviceTokenRow(result.rows[0]);
+  }
+
+  async getDeviceTokensForAudience(audience) {
+    if (audience === 'free') {
+      const result = await this.pool.query('select token from device_tokens');
+      return result.rows.map((row) => row.token);
+    }
+
+    const result = await this.pool.query(
+      `select distinct dt.token
+       from device_tokens dt
+       join vip_requests vr on vr.email = dt.user_email
+       where vr.status = 'approved'`
+    );
+    return result.rows.map((row) => row.token);
   }
 
   async getSignals(audience = 'all') {
@@ -521,6 +607,17 @@ function mapUserRow(row) {
     email: row.email,
     displayName: row.display_name || '',
     token: row.auth_token,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapDeviceTokenRow(row) {
+  return {
+    id: row.id,
+    userEmail: row.user_email,
+    token: row.token,
+    platform: row.platform,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

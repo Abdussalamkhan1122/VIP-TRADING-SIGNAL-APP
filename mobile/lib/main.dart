@@ -1,5 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,7 +13,15 @@ const backendBaseUrl = String.fromEnvironment(
   defaultValue: 'https://hurrair-vip-trading-backend.onrender.com',
 );
 
-void main() {
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await NotificationService.initializeFirebase();
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initializeFirebase();
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   runApp(const HurrairApp());
 }
 
@@ -84,6 +95,7 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
     try {
       final info = await api.getMe(token);
       await saveAccount(info.account);
+      await NotificationService.registerDevice(info.account.token);
       if (!mounted) return;
       openApp();
     } catch (_) {
@@ -116,6 +128,7 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
           ? await api.register(email: email, password: password, displayName: name)
           : await api.login(email: email, password: password);
       await saveAccount(account);
+      await NotificationService.registerDevice(account.token);
       if (!mounted) return;
       openApp();
     } catch (_) {
@@ -350,6 +363,26 @@ class ApiClient {
     }
   }
 
+  Future<void> registerDeviceToken({
+    required String authToken,
+    required String deviceToken,
+    required String platform,
+  }) async {
+    final uri = Uri.parse('$backendBaseUrl/api/devices/register');
+    final response = await http.post(
+      uri,
+      headers: {...authHeaders(authToken), 'content-type': 'application/json'},
+      body: jsonEncode({
+        'token': deviceToken,
+        'platform': platform,
+      }),
+    );
+
+    if (response.statusCode != 201) {
+      throw Exception('Device registration failed: ${response.statusCode}');
+    }
+  }
+
   Future<String> getVipStatus(String token) async {
     final uri = Uri.parse('$backendBaseUrl/api/vip/status');
     final response = await http.get(uri, headers: authHeaders(token));
@@ -406,6 +439,65 @@ class AccountInfo {
       ),
       vipStatus: json['vipStatus']?.toString() ?? 'not_submitted',
     );
+  }
+}
+
+class NotificationService {
+  static bool _firebaseReady = false;
+
+  static Future<void> initializeFirebase() async {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+      _firebaseReady = true;
+    } catch (_) {
+      _firebaseReady = false;
+    }
+  }
+
+  static Future<String> registerDevice(String authToken) async {
+    await initializeFirebase();
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!_firebaseReady) {
+      await prefs.setString('notificationStatus', 'setup_needed');
+      return 'setup_needed';
+    }
+
+    try {
+      final settings = await FirebaseMessaging.instance.requestPermission();
+      if (settings.authorizationStatus == AuthorizationStatus.denied) {
+        await prefs.setString('notificationStatus', 'denied');
+        return 'denied';
+      }
+
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token == null || token.isEmpty) {
+        await prefs.setString('notificationStatus', 'unavailable');
+        return 'unavailable';
+      }
+
+      await const ApiClient().registerDeviceToken(
+        authToken: authToken,
+        deviceToken: token,
+        platform: Platform.isIOS ? 'ios' : 'android',
+      );
+
+      FirebaseMessaging.instance.onTokenRefresh.listen((nextToken) {
+        const ApiClient().registerDeviceToken(
+          authToken: authToken,
+          deviceToken: nextToken,
+          platform: Platform.isIOS ? 'ios' : 'android',
+        );
+      });
+
+      await prefs.setString('notificationStatus', 'enabled');
+      return 'enabled';
+    } catch (_) {
+      await prefs.setString('notificationStatus', 'error');
+      return 'error';
+    }
   }
 }
 
@@ -952,6 +1044,7 @@ class _AccountPageState extends State<AccountPage> {
   String? token;
   String? displayName;
   String status = 'not_submitted';
+  String notificationStatus = 'not_registered';
   bool loading = true;
   bool submitting = false;
   bool registerMode = true;
@@ -977,6 +1070,7 @@ class _AccountPageState extends State<AccountPage> {
     final savedToken = prefs.getString('authToken');
     final savedEmail = prefs.getString('authEmail');
     final savedName = prefs.getString('authDisplayName');
+    final savedNotificationStatus = prefs.getString('notificationStatus') ?? 'not_registered';
     var nextStatus = 'not_submitted';
     var nextEmail = savedEmail;
     var nextName = savedName;
@@ -996,6 +1090,7 @@ class _AccountPageState extends State<AccountPage> {
       email = nextEmail;
       displayName = nextName;
       status = nextStatus;
+      notificationStatus = savedNotificationStatus;
       loading = false;
     });
   }
@@ -1024,6 +1119,7 @@ class _AccountPageState extends State<AccountPage> {
           ? await api.register(email: nextEmail, password: password, displayName: nextName)
           : await api.login(email: nextEmail, password: password);
       await saveAccount(account);
+      await NotificationService.registerDevice(account.token);
       emailController.clear();
       passwordController.clear();
       nameController.clear();
@@ -1059,6 +1155,7 @@ class _AccountPageState extends State<AccountPage> {
     await prefs.remove('authEmail');
     await prefs.remove('authDisplayName');
     await prefs.remove('vipEmail');
+    await prefs.remove('notificationStatus');
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AuthGateScreen()),
@@ -1074,6 +1171,14 @@ class _AccountPageState extends State<AccountPage> {
       'rejected' => 'Rejected - register through the official link and resubmit',
       'unknown' => 'Could not check status',
       _ => 'Free user',
+    };
+    final notificationText = switch (notificationStatus) {
+      'enabled' => 'Enabled',
+      'denied' => 'Permission denied',
+      'setup_needed' => 'Firebase setup needed',
+      'error' => 'Could not register this device',
+      'unavailable' => 'Device token unavailable',
+      _ => 'Not registered yet',
     };
 
     return ListView(
@@ -1114,10 +1219,10 @@ class _AccountPageState extends State<AccountPage> {
           title: Text('Backend'),
           subtitle: Text(backendBaseUrl),
         ),
-        const ListTile(
-          leading: Icon(Icons.notifications),
-          title: Text('Notifications'),
-          subtitle: Text('Firebase push notifications coming next'),
+        ListTile(
+          leading: const Icon(Icons.notifications),
+          title: const Text('Notifications'),
+          subtitle: Text(notificationText),
         ),
         if (message != null) ...[
           const SizedBox(height: 12),
