@@ -37,7 +37,7 @@ Required Firebase setup:
 
 1. Create a Firebase project.
 2. Add the Android app package and iOS bundle ID:
-   - Android package: `com.trading.HurrairstradingAPP`
+   - Android package: `com.trading.hurrairstradingapp`
    - iOS bundle ID: `com.hurrair.hurrairVipTrading`
 3. Add these GitHub repository secrets for the mobile build:
    - `FIREBASE_API_KEY`

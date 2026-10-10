@@ -1,6 +1,6 @@
 import 'dart:io';
 
-const firebaseAndroidPackage = 'com.trading.HurrairstradingAPP';
+const firebaseAndroidPackage = 'com.trading.hurrairstradingapp';
 
 void main() {
   final manifest = File('android/app/src/main/AndroidManifest.xml');
