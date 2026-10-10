@@ -6,7 +6,7 @@ void main() {
   testWidgets('shows app title', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(const HurrairApp());
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('Hurrair VIP Trading'), findsOneWidget);
   });
 }
