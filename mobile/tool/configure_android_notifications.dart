@@ -41,6 +41,14 @@ void configureGradlePackage() {
       RegExp(r'applicationId\s*=?\s*"[^"]+"'),
       'applicationId = "$firebaseAndroidPackage"',
     );
+    text = text.replaceAll(
+      RegExp(r'minSdk\s*=\s*flutter\.minSdkVersion'),
+      'minSdk = 23',
+    );
+    text = text.replaceAll(
+      RegExp(r'minSdkVersion\s*=?\s*flutter\.minSdkVersion'),
+      'minSdkVersion 23',
+    );
     file.writeAsStringSync(text);
   }
 }
