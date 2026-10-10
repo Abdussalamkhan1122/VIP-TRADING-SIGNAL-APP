@@ -41,10 +41,6 @@ void configureGradlePackage() {
       RegExp(r'applicationId\s*=?\s*"[^"]+"'),
       'applicationId = "$firebaseAndroidPackage"',
     );
-    text = text.replaceAll(
-      RegExp(r'namespace\s*=?\s*"[^"]+"'),
-      'namespace = "$firebaseAndroidPackage"',
-    );
     file.writeAsStringSync(text);
   }
 }
