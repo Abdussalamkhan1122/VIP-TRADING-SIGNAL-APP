@@ -102,8 +102,12 @@ class ApiClient {
     return AppSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<List<TradingSignal>> getSignals(SignalAudience audience) async {
-    final uri = Uri.parse('$backendBaseUrl/api/signals?audience=${audience.apiValue}');
+  Future<List<TradingSignal>> getSignals(SignalAudience audience, {String? vipEmail}) async {
+    final query = {
+      'audience': audience.apiValue,
+      if (audience == SignalAudience.vip && vipEmail != null) 'email': vipEmail,
+    };
+    final uri = Uri.parse('$backendBaseUrl/api/signals').replace(queryParameters: query);
     final response = await http.get(uri);
     if (response.statusCode != 200) {
       throw Exception('Signals request failed: ${response.statusCode}');
@@ -224,7 +228,9 @@ class _SignalsPageState extends State<SignalsPage> {
   @override
   void initState() {
     super.initState();
-    futureSignals = api.getSignals(widget.audience);
+    futureSignals = widget.audience == SignalAudience.free
+        ? api.getSignals(widget.audience)
+        : Future.value([]);
   }
 
   void refresh() {
@@ -236,19 +242,79 @@ class _SignalsPageState extends State<SignalsPage> {
   @override
   Widget build(BuildContext context) {
     if (widget.audience == SignalAudience.vip) {
-      return VipGate(
-        child: SignalsList(
-          title: widget.title,
-          futureSignals: futureSignals,
-          onRefresh: refresh,
-        ),
-      );
+      return VipSignalsPage(title: widget.title);
     }
 
     return SignalsList(
       title: widget.title,
       futureSignals: futureSignals,
       onRefresh: refresh,
+    );
+  }
+}
+
+class VipSignalsPage extends StatefulWidget {
+  const VipSignalsPage({super.key, required this.title});
+
+  final String title;
+
+  @override
+  State<VipSignalsPage> createState() => _VipSignalsPageState();
+}
+
+class _VipSignalsPageState extends State<VipSignalsPage> {
+  final api = const ApiClient();
+  Future<String>? statusFuture;
+  Future<List<TradingSignal>>? signalsFuture;
+  String? email;
+
+  @override
+  void initState() {
+    super.initState();
+    statusFuture = loadStatus();
+  }
+
+  Future<String> loadStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedEmail = prefs.getString('vipEmail');
+    email = savedEmail;
+    if (savedEmail == null || savedEmail.isEmpty) return 'not_submitted';
+
+    final status = await api.getVipStatus(savedEmail);
+    if (status == 'approved') {
+      signalsFuture = api.getSignals(SignalAudience.vip, vipEmail: savedEmail);
+    } else {
+      signalsFuture = null;
+    }
+    return status;
+  }
+
+  void refresh() {
+    setState(() {
+      statusFuture = loadStatus();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String>(
+      future: statusFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final status = snapshot.data ?? 'not_submitted';
+        if (status != 'approved') {
+          return LockedVipView(email: email, status: status, onRefresh: refresh);
+        }
+
+        return SignalsList(
+          title: widget.title,
+          futureSignals: signalsFuture ?? Future.value([]),
+          onRefresh: refresh,
+        );
+      },
     );
   }
 }
@@ -394,58 +460,6 @@ String formatSignalTime(DateTime? timestamp) {
   final hour = timestamp.hour.toString().padLeft(2, '0');
   final minute = timestamp.minute.toString().padLeft(2, '0');
   return '$day/$month/${timestamp.year} $hour:$minute';
-}
-
-class VipGate extends StatefulWidget {
-  const VipGate({super.key, required this.child});
-
-  final Widget child;
-
-  @override
-  State<VipGate> createState() => _VipGateState();
-}
-
-class _VipGateState extends State<VipGate> {
-  final api = const ApiClient();
-  late Future<String> statusFuture;
-  String? email;
-
-  @override
-  void initState() {
-    super.initState();
-    statusFuture = loadStatus();
-  }
-
-  Future<String> loadStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedEmail = prefs.getString('vipEmail');
-    email = savedEmail;
-    if (savedEmail == null || savedEmail.isEmpty) return 'not_submitted';
-    return api.getVipStatus(savedEmail);
-  }
-
-  void refresh() {
-    setState(() {
-      statusFuture = loadStatus();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<String>(
-      future: statusFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        final status = snapshot.data ?? 'not_submitted';
-        if (status == 'approved') return widget.child;
-
-        return LockedVipView(email: email, status: status, onRefresh: refresh);
-      },
-    );
-  }
 }
 
 class LockedVipView extends StatelessWidget {

@@ -16,6 +16,19 @@ Returns app settings.
 
 Returns signals visible to the requested audience.
 
+Rules:
+
+- Signals older than 24 hours are hidden.
+- `audience=free` returns only the free allocation.
+- `audience=vip` requires an approved VIP email query parameter.
+- Public `audience=all` is treated as Free-only. Admin all-signal access uses `/api/admin/signals`.
+
+Example:
+
+```http
+GET /api/signals?audience=vip&email=client@example.com
+```
+
 ### `POST /api/vip/request`
 
 Creates a VIP verification request.
@@ -26,6 +39,10 @@ Creates a VIP verification request.
   "displayName": "Client Name"
 }
 ```
+
+### `GET /api/vip/status?email=client@example.com`
+
+Returns whether a submitted email is `not_submitted`, `pending`, `approved`, or `rejected`.
 
 ## Telegram
 
@@ -49,6 +66,10 @@ Updates Free/VIP rules.
 
 Lists VIP verification requests.
 
+### `GET /api/admin/signals`
+
+Lists all active Free and VIP signals for admin review.
+
 ### `PATCH /api/admin/vip-requests/:id`
 
 Approves or rejects a request.
@@ -58,4 +79,3 @@ Approves or rejects a request.
   "status": "approved"
 }
 ```
-

@@ -9,6 +9,8 @@ export const DEFAULT_SETTINGS = {
   exnessPartnerLink: process.env.EXNESS_PARTNER_LINK || 'https://one.exnessonelink.com/a/i2cmzyptz3'
 };
 
+const SIGNAL_TTL_HOURS = 24;
+
 export async function createStore(filePath) {
   if (process.env.DATABASE_URL) {
     const { Pool } = await import('pg');
@@ -68,9 +70,11 @@ export class JsonStore {
   }
 
   getSignals(audience = 'all') {
-    if (audience === 'all') return this.data.signals;
-    if (audience === 'free') return this.data.signals.filter((signal) => signal.audience === 'free');
-    if (audience === 'vip') return this.data.signals.filter((signal) => signal.audience === 'vip');
+    const freeSignalLimit = Number(this.data.settings.freeSignalLimit);
+    const freshSignals = this.data.signals.filter(isFreshSignal);
+    if (audience === 'all') return freshSignals;
+    if (audience === 'free') return freshSignals.filter((signal) => signal.signalNumber <= freeSignalLimit);
+    if (audience === 'vip') return freshSignals.filter((signal) => signal.signalNumber > freeSignalLimit);
     return [];
   }
 
@@ -212,13 +216,22 @@ export class PgStore {
   }
 
   async getSignals(audience = 'all') {
-    const params = [];
-    let where = '';
-    if (audience === 'free' || audience === 'vip') {
-      params.push(audience);
-      where = 'where audience = $1';
+    const settings = await this.getSettings();
+    const params = [SIGNAL_TTL_HOURS];
+    const filters = [`created_at >= now() - ($1::text || ' hours')::interval`];
+
+    if (audience === 'free') {
+      params.push(settings.freeSignalLimit);
+      filters.push(`signal_number <= $${params.length}`);
+    } else if (audience === 'vip') {
+      params.push(settings.freeSignalLimit);
+      filters.push(`signal_number > $${params.length}`);
     }
-    const result = await this.pool.query(`select * from signals ${where} order by created_at desc`, params);
+
+    const result = await this.pool.query(
+      `select * from signals where ${filters.join(' and ')} order by created_at desc`,
+      params
+    );
     return result.rows.map(mapSignalRow);
   }
 
@@ -283,7 +296,12 @@ export class PgStore {
 
   async countSignalsForPeriod(resetPeriod) {
     if (resetPeriod === 'never') {
-      const result = await this.pool.query('select count(*)::int as count from signals');
+      const result = await this.pool.query(
+        `select count(*)::int as count
+         from signals
+         where created_at >= now() - ($1::text || ' hours')::interval`,
+        [SIGNAL_TTL_HOURS]
+      );
       return result.rows[0].count;
     }
 
@@ -291,22 +309,31 @@ export class PgStore {
     const result = await this.pool.query(
       `select count(*)::int as count
        from signals
-       where created_at >= date_trunc($1, now())`,
-      [interval]
+       where created_at >= date_trunc($1, now())
+         and created_at >= now() - ($2::text || ' hours')::interval`,
+      [interval, SIGNAL_TTL_HOURS]
     );
     return result.rows[0].count;
   }
 }
 
 function countSignalsForPeriod(signals, resetPeriod) {
-  if (resetPeriod === 'never') return signals.length;
+  const freshSignals = signals.filter(isFreshSignal);
+  if (resetPeriod === 'never') return freshSignals.length;
   const now = new Date();
-  return signals.filter((signal) => {
+  return freshSignals.filter((signal) => {
     const created = new Date(signal.createdAt);
     if (resetPeriod === 'daily') return sameDay(created, now);
     if (resetPeriod === 'weekly') return sameWeek(created, now);
     return true;
   }).length;
+}
+
+function isFreshSignal(signal) {
+  const createdAt = new Date(signal.createdAt);
+  if (Number.isNaN(createdAt.getTime())) return false;
+  const maxAgeMs = SIGNAL_TTL_HOURS * 60 * 60 * 1000;
+  return Date.now() - createdAt.getTime() <= maxAgeMs;
 }
 
 function sameDay(a, b) {

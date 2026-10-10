@@ -31,7 +31,15 @@ async function route(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/settings') return sendJson(res, 200, await store.getSettings());
 
   if (req.method === 'GET' && url.pathname === '/api/signals') {
-    return sendJson(res, 200, { signals: await store.getSignals(url.searchParams.get('audience') || 'all') });
+    const audience = url.searchParams.get('audience') || 'free';
+    if (audience === 'vip') {
+      const email = String(url.searchParams.get('email') || '').trim().toLowerCase();
+      if (!isEmail(email)) return sendJson(res, 401, { error: 'vip_email_required' });
+      const request = await store.findVipRequestByEmail(email);
+      if (request?.status !== 'approved') return sendJson(res, 403, { error: 'vip_not_approved' });
+    }
+    const publicAudience = audience === 'all' ? 'free' : audience;
+    return sendJson(res, 200, { signals: await store.getSignals(publicAudience) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/vip/request') {
@@ -77,6 +85,10 @@ async function route(req, res) {
 
     if (req.method === 'GET' && url.pathname === '/api/admin/vip-requests') {
       return sendJson(res, 200, { requests: await store.getVipRequests() });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/admin/signals') {
+      return sendJson(res, 200, { signals: await store.getSignals('all') });
     }
 
     const vipMatch = url.pathname.match(/^\/api\/admin\/vip-requests\/([^/]+)$/);

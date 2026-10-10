@@ -8,6 +8,10 @@ Build **Hurrair VIP Trading**, a professional trading signals app for both iOS a
 
 - Free signals feed.
 - VIP signals feed.
+- Free users can only see the free allocation, currently the first 2 signals in the active signal window.
+- VIP signals must be locked unless the user's submitted email is approved by admin.
+- Signals remain visible for 24 hours, then disappear from app feeds whether they are Free or VIP.
+- Signal cards must show a timestamp/age so users can tell new signals from old signals.
 - Signal detail screen.
 - Signal history.
 - VIP unlock flow using the official Exness partner link.
@@ -73,3 +77,8 @@ Flow:
 
 The app must not request Exness passwords.
 
+## Notifications
+
+New signal push notifications require Firebase Cloud Messaging setup for Android and iOS.
+
+SMS messages require an SMS provider such as Twilio or another paid/local SMS gateway. The app should not claim SMS delivery is active until provider credentials and phone-number collection are implemented.

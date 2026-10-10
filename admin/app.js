@@ -26,7 +26,7 @@ function showView(id) {
 async function loadSignals() {
   const target = document.querySelector('#signalsList');
   target.innerHTML = '<p>Loading...</p>';
-  const data = await get('/api/signals?audience=all');
+  const data = await get('/api/admin/signals', true);
   target.innerHTML = data.signals.map((signal) => `
     <article class="card">
       <span class="badge">${signal.audience.toUpperCase()}</span>
