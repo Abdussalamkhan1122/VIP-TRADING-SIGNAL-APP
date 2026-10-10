@@ -32,6 +32,16 @@ create table if not exists vip_requests (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists users (
+  id uuid primary key,
+  email text not null unique,
+  display_name text,
+  password_hash text not null,
+  auth_token text not null unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists signals_audience_created_at_idx on signals (audience, created_at desc);
 create index if not exists vip_requests_status_created_at_idx on vip_requests (status, created_at desc);
-
+create index if not exists users_auth_token_idx on users (auth_token);

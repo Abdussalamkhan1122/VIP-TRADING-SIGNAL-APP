@@ -30,12 +30,39 @@ async function route(req, res) {
   if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true });
   if (req.method === 'GET' && url.pathname === '/api/settings') return sendJson(res, 200, await store.getSettings());
 
+  if (req.method === 'POST' && url.pathname === '/api/auth/register') {
+    const body = await readJson(req);
+    if (!isEmail(body.email)) return sendJson(res, 400, { error: 'valid_email_required' });
+    if (!isValidPassword(body.password)) return sendJson(res, 400, { error: 'password_min_6_required' });
+    const user = await store.createUser(body);
+    if (!user) return sendJson(res, 409, { error: 'email_already_registered' });
+    return sendJson(res, 201, { user: publicUser(user), token: user.token });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+    const body = await readJson(req);
+    const user = await store.authenticateUser(body.email, body.password);
+    if (!user) return sendJson(res, 401, { error: 'invalid_login' });
+    return sendJson(res, 200, { user: publicUser(user), token: user.token });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/me') {
+    const user = await getAuthUser(req);
+    if (!user) return sendJson(res, 401, { error: 'auth_required' });
+    const request = await store.findVipRequestByEmail(user.email);
+    return sendJson(res, 200, {
+      user: publicUser(user),
+      vipStatus: request?.status || 'not_submitted',
+      vipRequest: request || null
+    });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/signals') {
     const audience = url.searchParams.get('audience') || 'free';
     if (audience === 'vip') {
-      const email = String(url.searchParams.get('email') || '').trim().toLowerCase();
-      if (!isEmail(email)) return sendJson(res, 401, { error: 'vip_email_required' });
-      const request = await store.findVipRequestByEmail(email);
+      const user = await getAuthUser(req);
+      if (!user) return sendJson(res, 401, { error: 'auth_required' });
+      const request = await store.findVipRequestByEmail(user.email);
       if (request?.status !== 'approved') return sendJson(res, 403, { error: 'vip_not_approved' });
     }
     const publicAudience = audience === 'all' ? 'free' : audience;
@@ -44,13 +71,18 @@ async function route(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/api/vip/request') {
     const body = await readJson(req);
-    if (!isEmail(body.email)) return sendJson(res, 400, { error: 'valid_email_required' });
-    const request = await store.createVipRequest(body);
+    const user = await getAuthUser(req);
+    if (!user) return sendJson(res, 401, { error: 'auth_required' });
+    const request = await store.createVipRequest({
+      email: user.email,
+      displayName: body.displayName || user.displayName
+    });
     return sendJson(res, 201, { request });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/vip/status') {
-    const email = String(url.searchParams.get('email') || '').trim().toLowerCase();
+    const user = await getAuthUser(req);
+    const email = user?.email || String(url.searchParams.get('email') || '').trim().toLowerCase();
     if (!isEmail(email)) return sendJson(res, 400, { error: 'valid_email_required' });
     const request = await store.findVipRequestByEmail(email);
     return sendJson(res, 200, {
@@ -107,6 +139,21 @@ function isAdmin(req) {
   return req.headers.authorization === `Bearer ${ADMIN_API_KEY}`;
 }
 
+async function getAuthUser(req) {
+  const header = String(req.headers.authorization || '');
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+  return store.findUserByToken(match[1].trim());
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName || ''
+  };
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -135,4 +182,8 @@ function sendCors(res) {
 
 function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function isValidPassword(value) {
+  return String(value || '').length >= 6;
 }

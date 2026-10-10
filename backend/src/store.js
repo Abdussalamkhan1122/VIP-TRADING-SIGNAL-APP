@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 export const DEFAULT_SETTINGS = {
   freeSignalLimit: 2,
@@ -67,6 +67,43 @@ export class JsonStore {
     this.data.signals.unshift(signal);
     await this.save();
     return signal;
+  }
+
+  async createUser(input) {
+    const email = normalizeEmail(input.email);
+    if (this.data.users.some((user) => user.email === email)) return null;
+
+    const now = new Date().toISOString();
+    const user = {
+      id: randomUUID(),
+      email,
+      displayName: String(input.displayName || '').trim(),
+      passwordHash: createPasswordHash(input.password),
+      authToken: createAuthToken(),
+      createdAt: now,
+      updatedAt: now
+    };
+    this.data.users.unshift(user);
+    await this.save();
+    return mapUser(user);
+  }
+
+  async authenticateUser(emailInput, password) {
+    const email = normalizeEmail(emailInput);
+    const user = this.data.users.find((item) => item.email === email);
+    if (!user || !verifyPassword(password, user.passwordHash)) return null;
+
+    user.authToken = createAuthToken();
+    user.updatedAt = new Date().toISOString();
+    await this.save();
+    return mapUser(user);
+  }
+
+  findUserByToken(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) return null;
+    const user = this.data.users.find((item) => item.authToken === cleanToken);
+    return user ? mapUser(user) : null;
   }
 
   getSignals(audience = 'all') {
@@ -170,8 +207,19 @@ export class PgStore {
         updated_at timestamptz not null default now()
       );
 
+      create table if not exists users (
+        id uuid primary key,
+        email text not null unique,
+        display_name text,
+        password_hash text not null,
+        auth_token text not null unique,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      );
+
       create index if not exists signals_audience_created_at_idx on signals (audience, created_at desc);
       create index if not exists vip_requests_status_created_at_idx on vip_requests (status, created_at desc);
+      create index if not exists users_auth_token_idx on users (auth_token);
     `);
 
     await this.pool.query(
@@ -213,6 +261,42 @@ export class PgStore {
     );
 
     return mapSignalRow(result.rows[0]);
+  }
+
+  async createUser(input) {
+    const result = await this.pool.query(
+      `insert into users (id, email, display_name, password_hash, auth_token)
+       values ($1, $2, $3, $4, $5)
+       on conflict (email) do nothing
+       returning *`,
+      [
+        randomUUID(),
+        normalizeEmail(input.email),
+        String(input.displayName || '').trim(),
+        createPasswordHash(input.password),
+        createAuthToken()
+      ]
+    );
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
+  async authenticateUser(emailInput, password) {
+    const existing = await this.pool.query('select * from users where email = $1 limit 1', [normalizeEmail(emailInput)]);
+    const user = existing.rows[0];
+    if (!user || !verifyPassword(password, user.password_hash)) return null;
+
+    const result = await this.pool.query(
+      `update users set auth_token = $1, updated_at = now() where id = $2 returning *`,
+      [createAuthToken(), user.id]
+    );
+    return mapUserRow(result.rows[0]);
+  }
+
+  async findUserByToken(token) {
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) return null;
+    const result = await this.pool.query('select * from users where auth_token = $1 limit 1', [cleanToken]);
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
   }
 
   async getSignals(audience = 'all') {
@@ -361,6 +445,39 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, Math.floor(number)));
 }
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function createAuthToken() {
+  return randomBytes(32).toString('hex');
+}
+
+function createPasswordHash(password) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = pbkdf2Sync(String(password), salt, 120000, 32, 'sha256').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  const [salt, hash] = String(storedHash || '').split(':');
+  if (!salt || !hash) return false;
+  const nextHash = pbkdf2Sync(String(password), salt, 120000, 32, 'sha256');
+  const stored = Buffer.from(hash, 'hex');
+  return stored.length === nextHash.length && timingSafeEqual(stored, nextHash);
+}
+
+function mapUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName || '',
+    token: user.authToken,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
+}
+
 function mapSettingsRow(row) {
   return {
     freeSignalLimit: row.free_signal_limit,
@@ -393,6 +510,17 @@ function mapVipRequestRow(row) {
     email: row.email,
     displayName: row.display_name,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapUserRow(row) {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name || '',
+    token: row.auth_token,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

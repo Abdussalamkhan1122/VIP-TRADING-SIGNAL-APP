@@ -121,13 +121,60 @@ class ApiClient {
     return AppSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<List<TradingSignal>> getSignals(SignalAudience audience, {String? vipEmail}) async {
+  Future<AuthAccount> register({
+    required String email,
+    required String password,
+    String displayName = '',
+  }) async {
+    final uri = Uri.parse('$backendBaseUrl/api/auth/register');
+    final response = await http.post(
+      uri,
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+        'displayName': displayName,
+      }),
+    );
+
+    if (response.statusCode != 201) {
+      throw Exception('Register failed: ${response.statusCode}');
+    }
+
+    return AuthAccount.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AuthAccount> login({required String email, required String password}) async {
+    final uri = Uri.parse('$backendBaseUrl/api/auth/login');
+    final response = await http.post(
+      uri,
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'email': email, 'password': password}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Login failed: ${response.statusCode}');
+    }
+
+    return AuthAccount.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AccountInfo> getMe(String token) async {
+    final uri = Uri.parse('$backendBaseUrl/api/me');
+    final response = await http.get(uri, headers: authHeaders(token));
+    if (response.statusCode != 200) {
+      throw Exception('Account request failed: ${response.statusCode}');
+    }
+
+    return AccountInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>, token);
+  }
+
+  Future<List<TradingSignal>> getSignals(SignalAudience audience, {String? token}) async {
     final query = {
       'audience': audience.apiValue,
-      if (audience == SignalAudience.vip && vipEmail != null) 'email': vipEmail,
     };
     final uri = Uri.parse('$backendBaseUrl/api/signals').replace(queryParameters: query);
-    final response = await http.get(uri);
+    final response = await http.get(uri, headers: token == null ? null : authHeaders(token));
     if (response.statusCode != 200) {
       throw Exception('Signals request failed: ${response.statusCode}');
     }
@@ -139,12 +186,12 @@ class ApiClient {
         .toList();
   }
 
-  Future<void> requestVip({required String email, String displayName = ''}) async {
+  Future<void> requestVip({required String token}) async {
     final uri = Uri.parse('$backendBaseUrl/api/vip/request');
     final response = await http.post(
       uri,
-      headers: {'content-type': 'application/json'},
-      body: jsonEncode({'email': email, 'displayName': displayName}),
+      headers: {...authHeaders(token), 'content-type': 'application/json'},
+      body: jsonEncode({}),
     );
 
     if (response.statusCode != 201) {
@@ -152,15 +199,62 @@ class ApiClient {
     }
   }
 
-  Future<String> getVipStatus(String email) async {
-    final uri = Uri.parse('$backendBaseUrl/api/vip/status?email=${Uri.encodeQueryComponent(email)}');
-    final response = await http.get(uri);
+  Future<String> getVipStatus(String token) async {
+    final uri = Uri.parse('$backendBaseUrl/api/vip/status');
+    final response = await http.get(uri, headers: authHeaders(token));
     if (response.statusCode != 200) {
       throw Exception('VIP status request failed: ${response.statusCode}');
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     return body['status']?.toString() ?? 'not_submitted';
+  }
+
+  Map<String, String> authHeaders(String token) {
+    return {'authorization': 'Bearer $token'};
+  }
+}
+
+class AuthAccount {
+  const AuthAccount({
+    required this.token,
+    required this.email,
+    required this.displayName,
+  });
+
+  final String token;
+  final String email;
+  final String displayName;
+
+  factory AuthAccount.fromJson(Map<String, dynamic> json) {
+    final user = json['user'] as Map<String, dynamic>? ?? {};
+    return AuthAccount(
+      token: json['token']?.toString() ?? '',
+      email: user['email']?.toString() ?? '',
+      displayName: user['displayName']?.toString() ?? '',
+    );
+  }
+}
+
+class AccountInfo {
+  const AccountInfo({
+    required this.account,
+    required this.vipStatus,
+  });
+
+  final AuthAccount account;
+  final String vipStatus;
+
+  factory AccountInfo.fromJson(Map<String, dynamic> json, String token) {
+    final user = json['user'] as Map<String, dynamic>? ?? {};
+    return AccountInfo(
+      account: AuthAccount(
+        token: token,
+        email: user['email']?.toString() ?? '',
+        displayName: user['displayName']?.toString() ?? '',
+      ),
+      vipStatus: json['vipStatus']?.toString() ?? 'not_submitted',
+    );
   }
 }
 
@@ -286,6 +380,7 @@ class _VipSignalsPageState extends State<VipSignalsPage> {
   Future<String>? statusFuture;
   Future<List<TradingSignal>>? signalsFuture;
   String? email;
+  String? token;
 
   @override
   void initState() {
@@ -295,13 +390,15 @@ class _VipSignalsPageState extends State<VipSignalsPage> {
 
   Future<String> loadStatus() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedEmail = prefs.getString('vipEmail');
+    final savedToken = prefs.getString('authToken');
+    final savedEmail = prefs.getString('authEmail');
+    token = savedToken;
     email = savedEmail;
-    if (savedEmail == null || savedEmail.isEmpty) return 'not_submitted';
+    if (savedToken == null || savedToken.isEmpty) return 'login_required';
 
-    final status = await api.getVipStatus(savedEmail);
+    final status = await api.getVipStatus(savedToken);
     if (status == 'approved') {
-      signalsFuture = api.getSignals(SignalAudience.vip, vipEmail: savedEmail);
+      signalsFuture = api.getSignals(SignalAudience.vip, token: savedToken);
     } else {
       signalsFuture = null;
     }
@@ -525,6 +622,7 @@ class LockedVipView extends StatelessWidget {
   }
 
   String statusMessage(String status, String? email) {
+    if (status == 'login_required') return 'Create an account or login in the Account tab before requesting VIP access.';
     if (status == 'pending') return '$email is pending admin verification.';
     if (status == 'rejected') return '$email was not approved. Please register through the official partner link and submit again.';
     return 'Create an Exness account through the official partner link, submit your email, and wait for admin approval.';
@@ -563,30 +661,25 @@ class UnlockVipPage extends StatefulWidget {
 
 class _UnlockVipPageState extends State<UnlockVipPage> {
   final api = const ApiClient();
-  final emailController = TextEditingController();
   late Future<AppSettings> settingsFuture;
   bool loading = false;
   String? message;
+  String? token;
+  String? email;
 
   @override
   void initState() {
     super.initState();
     settingsFuture = api.getSettings();
-    loadSavedEmail();
+    loadAccount();
   }
 
-  @override
-  void dispose() {
-    emailController.dispose();
-    super.dispose();
-  }
-
-  Future<void> loadSavedEmail() async {
+  Future<void> loadAccount() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedEmail = prefs.getString('vipEmail');
-    if (savedEmail != null && savedEmail.isNotEmpty) {
-      emailController.text = savedEmail;
-    }
+    setState(() {
+      token = prefs.getString('authToken');
+      email = prefs.getString('authEmail');
+    });
   }
 
   Future<void> openPartnerLink(String link) async {
@@ -598,9 +691,9 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
   }
 
   Future<void> submit() async {
-    final email = emailController.text.trim();
-    if (!email.contains('@')) {
-      setState(() => message = 'Enter the email used for your Exness account.');
+    final savedToken = token;
+    if (savedToken == null || savedToken.isEmpty) {
+      setState(() => message = 'Login or create an account first in the Account tab.');
       return;
     }
 
@@ -610,9 +703,7 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
     });
 
     try {
-      await api.requestVip(email: email);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('vipEmail', email);
+      await api.requestVip(token: savedToken);
       setState(() {
         message = 'Request submitted. Admin will verify your Exness affiliation.';
       });
@@ -630,6 +721,22 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
       children: [
         Text('Unlock VIP', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 12),
+        if (token == null || token!.isEmpty) ...[
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Login or create an account in the Account tab before submitting VIP verification.'),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ] else ...[
+          ListTile(
+            leading: const Icon(Icons.email),
+            title: const Text('Logged in account'),
+            subtitle: Text(email ?? 'Unknown email'),
+          ),
+          const SizedBox(height: 12),
+        ],
         FutureBuilder<AppSettings>(
           future: settingsFuture,
           builder: (context, snapshot) {
@@ -650,7 +757,7 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
                     const SizedBox(height: 8),
                     SelectableText(link),
                     const SizedBox(height: 12),
-                    const Text('2. Submit the same email here for manual VIP verification.'),
+                    const Text('2. Submit verification from the logged-in account.'),
                   ],
                 ),
               ),
@@ -658,12 +765,6 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
           },
         ),
         const SizedBox(height: 16),
-        TextField(
-          controller: emailController,
-          keyboardType: TextInputType.emailAddress,
-          decoration: const InputDecoration(labelText: 'Exness email'),
-        ),
-        const SizedBox(height: 12),
         FilledButton.icon(
           onPressed: loading ? null : submit,
           icon: loading
@@ -693,9 +794,17 @@ class AccountPage extends StatefulWidget {
 
 class _AccountPageState extends State<AccountPage> {
   final api = const ApiClient();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+  final nameController = TextEditingController();
   String? email;
+  String? token;
+  String? displayName;
   String status = 'not_submitted';
   bool loading = true;
+  bool submitting = false;
+  bool registerMode = true;
+  String? message;
 
   @override
   void initState() {
@@ -703,27 +812,101 @@ class _AccountPageState extends State<AccountPage> {
     loadAccount();
   }
 
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    nameController.dispose();
+    super.dispose();
+  }
+
   Future<void> loadAccount() async {
     setState(() => loading = true);
     final prefs = await SharedPreferences.getInstance();
-    final savedEmail = prefs.getString('vipEmail');
+    final savedToken = prefs.getString('authToken');
+    final savedEmail = prefs.getString('authEmail');
+    final savedName = prefs.getString('authDisplayName');
     var nextStatus = 'not_submitted';
-    if (savedEmail != null && savedEmail.isNotEmpty) {
+    var nextEmail = savedEmail;
+    var nextName = savedName;
+    if (savedToken != null && savedToken.isNotEmpty) {
       try {
-        nextStatus = await api.getVipStatus(savedEmail);
+        final info = await api.getMe(savedToken);
+        nextStatus = info.vipStatus;
+        nextEmail = info.account.email;
+        nextName = info.account.displayName;
+        await saveAccount(info.account);
       } catch (_) {
         nextStatus = 'unknown';
       }
     }
     setState(() {
-      email = savedEmail;
+      token = savedToken;
+      email = nextEmail;
+      displayName = nextName;
       status = nextStatus;
       loading = false;
     });
   }
 
-  Future<void> clearEmail() async {
+  Future<void> submitAuth() async {
+    final nextEmail = emailController.text.trim();
+    final password = passwordController.text;
+    final nextName = nameController.text.trim();
+
+    if (!nextEmail.contains('@')) {
+      setState(() => message = 'Enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      setState(() => message = 'Password must be at least 6 characters.');
+      return;
+    }
+
+    setState(() {
+      submitting = true;
+      message = null;
+    });
+
+    try {
+      final account = registerMode
+          ? await api.register(email: nextEmail, password: password, displayName: nextName)
+          : await api.login(email: nextEmail, password: password);
+      await saveAccount(account);
+      emailController.clear();
+      passwordController.clear();
+      nameController.clear();
+      setState(() {
+        token = account.token;
+        email = account.email;
+        displayName = account.displayName;
+        status = 'not_submitted';
+        message = registerMode ? 'Account created. Now open the partner link and request VIP.' : 'Login successful.';
+      });
+      await loadAccount();
+    } catch (_) {
+      setState(() {
+        message = registerMode
+            ? 'Could not create account. This email may already be registered.'
+            : 'Login failed. Check your email and password.';
+      });
+    } finally {
+      setState(() => submitting = false);
+    }
+  }
+
+  Future<void> saveAccount(AuthAccount account) async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('authToken', account.token);
+    await prefs.setString('authEmail', account.email);
+    await prefs.setString('authDisplayName', account.displayName);
+  }
+
+  Future<void> signOut() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('authToken');
+    await prefs.remove('authEmail');
+    await prefs.remove('authDisplayName');
     await prefs.remove('vipEmail');
     await loadAccount();
   }
@@ -743,18 +926,34 @@ class _AccountPageState extends State<AccountPage> {
       children: [
         PageHeader(title: 'My Account', onRefresh: loadAccount),
         const SizedBox(height: 12),
-        ListTile(
-          leading: const Icon(Icons.email),
-          title: const Text('Submitted email'),
-          subtitle: Text(email?.isNotEmpty == true ? email! : 'No email submitted yet'),
-        ),
-        ListTile(
-          leading: loading
-              ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.verified_user),
-          title: const Text('VIP status'),
-          subtitle: Text(statusText),
-        ),
+        if (token == null || token!.isEmpty) AuthForm(
+          registerMode: registerMode,
+          loading: submitting,
+          emailController: emailController,
+          passwordController: passwordController,
+          nameController: nameController,
+          onModeChanged: (value) => setState(() => registerMode = value),
+          onSubmit: submitAuth,
+        ) else ...[
+          ListTile(
+            leading: const Icon(Icons.email),
+            title: const Text('Account email'),
+            subtitle: Text(email?.isNotEmpty == true ? email! : 'No email found'),
+          ),
+          if (displayName?.isNotEmpty == true)
+            ListTile(
+              leading: const Icon(Icons.badge),
+              title: const Text('Name'),
+              subtitle: Text(displayName!),
+            ),
+          ListTile(
+            leading: loading
+                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.verified_user),
+            title: const Text('VIP status'),
+            subtitle: Text(statusText),
+          ),
+        ],
         const ListTile(
           leading: Icon(Icons.cloud),
           title: Text('Backend'),
@@ -765,13 +964,93 @@ class _AccountPageState extends State<AccountPage> {
           title: Text('Notifications'),
           subtitle: Text('Firebase push notifications coming next'),
         ),
+        if (message != null) ...[
+          const SizedBox(height: 12),
+          Text(message!),
+        ],
         const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: email == null ? null : clearEmail,
-          icon: const Icon(Icons.logout),
-          label: const Text('Clear Submitted Email'),
-        ),
+        if (token != null && token!.isNotEmpty)
+          OutlinedButton.icon(
+            onPressed: signOut,
+            icon: const Icon(Icons.logout),
+            label: const Text('Sign Out'),
+          ),
       ],
+    );
+  }
+}
+
+class AuthForm extends StatelessWidget {
+  const AuthForm({
+    super.key,
+    required this.registerMode,
+    required this.loading,
+    required this.emailController,
+    required this.passwordController,
+    required this.nameController,
+    required this.onModeChanged,
+    required this.onSubmit,
+  });
+
+  final bool registerMode;
+  final bool loading;
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final TextEditingController nameController;
+  final ValueChanged<bool> onModeChanged;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: true, label: Text('Register'), icon: Icon(Icons.person_add)),
+                ButtonSegment(value: false, label: Text('Login'), icon: Icon(Icons.login)),
+              ],
+              selected: {registerMode},
+              onSelectionChanged: (selection) => onModeChanged(selection.first),
+            ),
+            const SizedBox(height: 12),
+            if (registerMode) ...[
+              TextField(
+                controller: nameController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: loading ? null : onSubmit,
+              icon: loading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(registerMode ? Icons.person_add : Icons.login),
+              label: Text(registerMode ? 'Create Account' : 'Login'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
