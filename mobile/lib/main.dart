@@ -37,7 +37,158 @@ class HurrairApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: const AuthGateScreen(),
+    );
+  }
+}
+
+class AuthGateScreen extends StatefulWidget {
+  const AuthGateScreen({super.key});
+
+  @override
+  State<AuthGateScreen> createState() => _AuthGateScreenState();
+}
+
+class _AuthGateScreenState extends State<AuthGateScreen> {
+  final api = const ApiClient();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+  final nameController = TextEditingController();
+  bool checking = true;
+  bool submitting = false;
+  bool registerMode = true;
+  String? message;
+
+  @override
+  void initState() {
+    super.initState();
+    checkSavedLogin();
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> checkSavedLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('authToken');
+    if (token == null || token.isEmpty) {
+      setState(() => checking = false);
+      return;
+    }
+
+    try {
+      final info = await api.getMe(token);
+      await saveAccount(info.account);
+      if (!mounted) return;
+      openApp();
+    } catch (_) {
+      await clearAccount();
+      if (mounted) setState(() => checking = false);
+    }
+  }
+
+  Future<void> submitAuth() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+    final name = nameController.text.trim();
+
+    if (!email.contains('@')) {
+      setState(() => message = 'Enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      setState(() => message = 'Password must be at least 6 characters.');
+      return;
+    }
+
+    setState(() {
+      submitting = true;
+      message = null;
+    });
+
+    try {
+      final account = registerMode
+          ? await api.register(email: email, password: password, displayName: name)
+          : await api.login(email: email, password: password);
+      await saveAccount(account);
+      if (!mounted) return;
+      openApp();
+    } catch (_) {
+      setState(() {
+        message = registerMode
+            ? 'Could not create account. This email may already be registered.'
+            : 'Login failed. Check your email and password.';
+      });
+    } finally {
+      if (mounted) setState(() => submitting = false);
+    }
+  }
+
+  Future<void> saveAccount(AuthAccount account) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('authToken', account.token);
+    await prefs.setString('authEmail', account.email);
+    await prefs.setString('authDisplayName', account.displayName);
+  }
+
+  Future<void> clearAccount() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('authToken');
+    await prefs.remove('authEmail');
+    await prefs.remove('authDisplayName');
+  }
+
+  void openApp() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (checking) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Hurrair VIP Trading')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/logo.png',
+                width: 120,
+                height: 120,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          AuthForm(
+            registerMode: registerMode,
+            loading: submitting,
+            emailController: emailController,
+            passwordController: passwordController,
+            nameController: nameController,
+            onModeChanged: (value) => setState(() => registerMode = value),
+            onSubmit: submitAuth,
+          ),
+          if (message != null) ...[
+            const SizedBox(height: 12),
+            Text(message!, textAlign: TextAlign.center),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -908,7 +1059,11 @@ class _AccountPageState extends State<AccountPage> {
     await prefs.remove('authEmail');
     await prefs.remove('authDisplayName');
     await prefs.remove('vipEmail');
-    await loadAccount();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthGateScreen()),
+      (route) => false,
+    );
   }
 
   @override
