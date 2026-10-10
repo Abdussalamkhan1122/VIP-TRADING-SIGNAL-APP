@@ -63,7 +63,26 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Hurrair VIP Trading'),
+        title: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.asset(
+                'assets/logo.png',
+                width: 32,
+                height: 32,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Hurrair VIP Trading',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         centerTitle: false,
       ),
       body: pages[index],
