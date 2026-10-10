@@ -40,6 +40,17 @@ jobs:
             --dart-define=FIREBASE_IOS_APP_ID=${{ secrets.FIREBASE_IOS_APP_ID }} \
             --dart-define=FIREBASE_IOS_BUNDLE_ID=${{ secrets.FIREBASE_IOS_BUNDLE_ID }} \
             2>&1 | tee build.log
+      - name: Show build log tail
+        if: failure()
+        run: |
+          echo "Last 160 lines of Flutter build log:"
+          tail -n 160 build.log || true
+          {
+            echo "### Flutter build log tail"
+            echo '```text'
+            tail -n 160 build.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
