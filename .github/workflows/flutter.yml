@@ -20,7 +20,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - run: flutter create --org com.hurrair --platforms=android,ios --project-name hurrair_vip_trading .
+      - run: flutter create --org com.trading --platforms=android,ios --project-name hurrair_vip_trading .
       - run: flutter pub get
       - run: dart run tool/configure_android_notifications.dart
       - run: dart run flutter_launcher_icons

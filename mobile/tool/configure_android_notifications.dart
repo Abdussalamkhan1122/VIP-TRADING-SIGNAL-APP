@@ -1,5 +1,7 @@
 import 'dart:io';
 
+const firebaseAndroidPackage = 'com.trading.HurrairstradingAPP';
+
 void main() {
   final manifest = File('android/app/src/main/AndroidManifest.xml');
   if (!manifest.existsSync()) {
@@ -24,4 +26,25 @@ void main() {
   }
 
   manifest.writeAsStringSync(xml);
+  configureGradlePackage();
+}
+
+void configureGradlePackage() {
+  final gradleFiles = [
+    File('android/app/build.gradle'),
+    File('android/app/build.gradle.kts'),
+  ].where((file) => file.existsSync());
+
+  for (final file in gradleFiles) {
+    var text = file.readAsStringSync();
+    text = text.replaceAll(
+      RegExp(r'applicationId\s*=?\s*"[^"]+"'),
+      'applicationId = "$firebaseAndroidPackage"',
+    );
+    text = text.replaceAll(
+      RegExp(r'namespace\s*=?\s*"[^"]+"'),
+      'namespace = "$firebaseAndroidPackage"',
+    );
+    file.writeAsStringSync(text);
+  }
 }
