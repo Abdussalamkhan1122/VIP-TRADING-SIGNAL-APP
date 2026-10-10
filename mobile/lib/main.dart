@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'firebase_options.dart';
+
 const backendBaseUrl = String.fromEnvironment(
   'BACKEND_URL',
   defaultValue: 'https://hurrair-vip-trading-backend.onrender.com',
@@ -21,7 +23,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.initializeFirebase();
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  if (NotificationService.firebaseReady) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  }
   runApp(const HurrairApp());
 }
 
@@ -444,11 +448,17 @@ class AccountInfo {
 
 class NotificationService {
   static bool _firebaseReady = false;
+  static bool get firebaseReady => _firebaseReady;
 
   static Future<void> initializeFirebase() async {
+    if (!DefaultFirebaseOptions.isConfigured) {
+      _firebaseReady = false;
+      return;
+    }
+
     try {
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp();
+        await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       }
       _firebaseReady = true;
     } catch (_) {
@@ -484,8 +494,8 @@ class NotificationService {
         platform: Platform.isIOS ? 'ios' : 'android',
       );
 
-      FirebaseMessaging.instance.onTokenRefresh.listen((nextToken) {
-        const ApiClient().registerDeviceToken(
+      FirebaseMessaging.instance.onTokenRefresh.listen((nextToken) async {
+        await const ApiClient().registerDeviceToken(
           authToken: authToken,
           deviceToken: nextToken,
           platform: Platform.isIOS ? 'ios' : 'android',
