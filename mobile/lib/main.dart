@@ -665,30 +665,92 @@ class _UnlockVipPageState extends State<UnlockVipPage> {
   }
 }
 
-class AccountPage extends StatelessWidget {
+class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
 
   @override
+  State<AccountPage> createState() => _AccountPageState();
+}
+
+class _AccountPageState extends State<AccountPage> {
+  final api = const ApiClient();
+  String? email;
+  String status = 'not_submitted';
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadAccount();
+  }
+
+  Future<void> loadAccount() async {
+    setState(() => loading = true);
+    final prefs = await SharedPreferences.getInstance();
+    final savedEmail = prefs.getString('vipEmail');
+    var nextStatus = 'not_submitted';
+    if (savedEmail != null && savedEmail.isNotEmpty) {
+      try {
+        nextStatus = await api.getVipStatus(savedEmail);
+      } catch (_) {
+        nextStatus = 'unknown';
+      }
+    }
+    setState(() {
+      email = savedEmail;
+      status = nextStatus;
+      loading = false;
+    });
+  }
+
+  Future<void> clearEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('vipEmail');
+    await loadAccount();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final statusText = switch (status) {
+      'approved' => 'VIP approved',
+      'pending' => 'Pending admin verification',
+      'rejected' => 'Rejected - register through the official link and resubmit',
+      'unknown' => 'Could not check status',
+      _ => 'Free user',
+    };
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text('My Account', style: Theme.of(context).textTheme.headlineSmall),
+        PageHeader(title: 'My Account', onRefresh: loadAccount),
         const SizedBox(height: 12),
+        ListTile(
+          leading: const Icon(Icons.email),
+          title: const Text('Submitted email'),
+          subtitle: Text(email?.isNotEmpty == true ? email! : 'No email submitted yet'),
+        ),
+        ListTile(
+          leading: loading
+              ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.verified_user),
+          title: const Text('VIP status'),
+          subtitle: Text(statusText),
+        ),
         const ListTile(
-          leading: Icon(Icons.verified_user),
-          title: Text('Status'),
-          subtitle: Text('Free user - login and VIP status sync coming next'),
+          leading: Icon(Icons.cloud),
+          title: Text('Backend'),
+          subtitle: Text(backendBaseUrl),
         ),
         const ListTile(
           leading: Icon(Icons.notifications),
           title: Text('Notifications'),
           subtitle: Text('Firebase push notifications coming next'),
         ),
-        const ListTile(
-          leading: Icon(Icons.cloud),
-          title: Text('Backend'),
-          subtitle: Text(backendBaseUrl),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: email == null ? null : clearEmail,
+          icon: const Icon(Icons.logout),
+          label: const Text('Clear Submitted Email'),
         ),
       ],
     );
